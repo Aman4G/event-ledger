@@ -21,6 +21,13 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Description: EventServiceImpl.java is the core service implementation for event lifecycle
+ * management in the Event Gateway Service. It handles event submission with idempotency
+ * enforcement using eventId as the primary key, delegates transaction application to the
+ * Account Service client, manages metadata serialization and deserialization, emits observability
+ * metrics, and provides event retrieval operations ordered by event timestamp.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -31,6 +38,14 @@ public class EventServiceImpl implements EventService {
     private final ObjectMapper objectMapper;
     private final EventMetricsService eventMetricsService;
 
+    /**
+     * Submits a transaction event to the gateway. Checks for an existing event with the same
+     * eventId first — if found, returns it as a duplicate without calling the Account Service.
+     * Otherwise, persists the event and forwards the transaction to the Account Service.
+     *
+     * @param request the event payload to submit
+     * @return EventResponse with status ACCEPTED for new events or DUPLICATE_IGNORED for duplicates
+     */
     @Override
     @Transactional
     public EventResponse submitEvent(EventRequest request) {
@@ -48,6 +63,14 @@ public class EventServiceImpl implements EventService {
                 .orElseGet(() -> createAndApplyEvent(request));
     }
 
+    /**
+     * Retrieves a single event from the gateway's local database by its eventId.
+     *
+     * @param eventId the unique identifier of the event to retrieve
+     * @return EventResponse with status FOUND
+     * @throws com.eventledger.gateway.common.exception.ResourceNotFoundException if the event
+     *         does not exist
+     */
     @Override
     @Transactional(readOnly = true)
     public EventResponse getEventById(String eventId) {
@@ -57,6 +80,13 @@ public class EventServiceImpl implements EventService {
         return buildResponse(event, "FOUND");
     }
 
+    /**
+     * Returns all events for the given accountId ordered by eventTimestamp ascending.
+     * Reads exclusively from the gateway's local database, independent of the Account Service.
+     *
+     * @param accountId the account whose events should be listed
+     * @return list of EventResponse objects ordered by eventTimestamp ascending
+     */
     @Override
     @Transactional(readOnly = true)
     public List<EventResponse> getEventsByAccountId(String accountId) {
@@ -66,6 +96,13 @@ public class EventServiceImpl implements EventService {
                 .toList();
     }
 
+    /**
+     * Persists a new event to the gateway database and calls the Account Service to apply
+     * the corresponding transaction. Increments the accepted events metric on success.
+     *
+     * @param request the validated event request to persist and forward
+     * @return EventResponse with status ACCEPTED
+     */
     private EventResponse createAndApplyEvent(EventRequest request) {
         Event event = Event.builder()
                 .eventId(request.getEventId())
@@ -100,6 +137,14 @@ public class EventServiceImpl implements EventService {
         return buildResponse(savedEvent, "ACCEPTED");
     }
 
+    /**
+     * Serializes the metadata map to a JSON string for storage. Returns null if metadata
+     * is null or empty.
+     *
+     * @param metadata the key-value metadata map to serialize
+     * @return JSON string representation of the metadata, or null if empty
+     * @throws IllegalArgumentException if the metadata cannot be serialized
+     */
     private String toJson(Map<String, Object> metadata) {
         if (metadata == null || metadata.isEmpty()) {
             return null;
@@ -112,6 +157,13 @@ public class EventServiceImpl implements EventService {
         }
     }
 
+    /**
+     * Deserializes a JSON string back into a metadata map. Returns an empty map if the
+     * input is null, blank, or cannot be parsed.
+     *
+     * @param metadata the JSON string to deserialize
+     * @return the deserialized metadata map, or an empty map if input is invalid
+     */
     private Map<String, Object> fromJson(String metadata) {
         if (metadata == null || metadata.isBlank()) {
             return Collections.emptyMap();
@@ -124,6 +176,13 @@ public class EventServiceImpl implements EventService {
         }
     }
 
+    /**
+     * Builds an EventResponse from a stored Event entity and a status string.
+     *
+     * @param event  the Event entity to convert
+     * @param status the status label to attach to the response (e.g. ACCEPTED, FOUND, DUPLICATE_IGNORED)
+     * @return the populated EventResponse
+     */
     private EventResponse buildResponse(Event event, String status) {
         return EventResponse.builder()
                 .eventId(event.getEventId())

@@ -17,6 +17,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 
+/**
+ * Description: TransactionServiceImpl.java is the core service implementation for transaction
+ * processing in the Account Service. It enforces idempotency by checking for an existing
+ * transaction with the same eventId before persisting, auto-creates account records on first
+ * transaction, validates that the path account ID matches the request body account ID, computes
+ * balances via JPQL sum queries to ensure out-of-order correctness, and emits observability
+ * metrics on each applied or duplicate transaction.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -26,6 +34,17 @@ public class TransactionServiceImpl implements TransactionService {
     private final AccountRepository accountRepository;
     private final TransactionMetricsService transactionMetricsService;
 
+    /**
+     * Applies a transaction to the specified account. Checks for an existing transaction
+     * with the same eventId first — if found, returns it as a duplicate. Otherwise,
+     * auto-creates the account if needed, persists the transaction, and increments the
+     * success metric.
+     *
+     * @param accountId the target account ID from the request path
+     * @param request   the transaction payload to apply
+     * @return TransactionResponse with status APPLIED for new transactions or
+     *         DUPLICATE_IGNORED for duplicates
+     */
     @Override
     @Transactional
     public TransactionResponse applyTransaction(String accountId, TransactionRequest request) {
@@ -44,6 +63,14 @@ public class TransactionServiceImpl implements TransactionService {
                 .orElseGet(() -> createTransaction(accountId, request));
     }
 
+    /**
+     * Computes the net balance for the given account as sum(CREDITs) − sum(DEBITs).
+     * Uses JPQL sum queries so the result is always correct regardless of the order
+     * in which transactions were inserted.
+     *
+     * @param accountId the account whose balance should be calculated
+     * @return the net balance as a BigDecimal
+     */
     @Override
     @Transactional(readOnly = true)
     public BigDecimal calculateBalance(String accountId) {
@@ -53,6 +80,14 @@ public class TransactionServiceImpl implements TransactionService {
         return totalCredits.subtract(totalDebits);
     }
 
+    /**
+     * Persists a new transaction to the database, creating the account record first if it
+     * does not already exist. Increments the transaction success metric on completion.
+     *
+     * @param accountId the target account ID
+     * @param request   the validated transaction payload to persist
+     * @return TransactionResponse with status APPLIED
+     */
     private TransactionResponse createTransaction(String accountId, TransactionRequest request) {
         if (!accountRepository.existsById(accountId)) {
             accountRepository.save(
@@ -83,12 +118,27 @@ public class TransactionServiceImpl implements TransactionService {
         return buildResponse(savedTransaction, "APPLIED");
     }
 
+    /**
+     * Validates that the account ID in the request path matches the account ID in the
+     * request body. Throws AccountMismatchException if they differ.
+     *
+     * @param pathAccountId    the account ID extracted from the URL path
+     * @param requestAccountId the account ID present in the request body
+     * @throws com.eventledger.account.common.exception.AccountMismatchException if the IDs do not match
+     */
     private void validateAccountId(String pathAccountId, String requestAccountId) {
         if (!pathAccountId.equals(requestAccountId)) {
             throw new AccountMismatchException("Account ID in path does not match account ID in request body");
         }
     }
 
+    /**
+     * Builds a TransactionResponse from a stored Transaction entity and a status string.
+     *
+     * @param transaction the Transaction entity to convert
+     * @param status      the status label to attach (e.g. APPLIED, DUPLICATE_IGNORED)
+     * @return the populated TransactionResponse
+     */
     private TransactionResponse buildResponse(Transaction transaction, String status) {
         return TransactionResponse.builder()
                 .eventId(transaction.getEventId())
