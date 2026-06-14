@@ -12,6 +12,8 @@ A distributed financial transaction processing system composed of two independen
 - [Prerequisites](#prerequisites)
 - [Setup and Installation](#setup-and-installation)
 - [Running the Services](#running-the-services)
+  - [Option 1: Docker Compose (recommended)](#option-1-docker-compose-recommended)
+  - [Option 2: Run locally with Maven](#option-2-run-locally-with-maven)
 - [Running the Tests](#running-the-tests)
 - [Distributed Tracing](#distributed-tracing)
 - [Observability](#observability)
@@ -74,7 +76,8 @@ event-ledger/
 │   │   │   ├── account/            # GET /accounts/{id}/balance proxy endpoint
 │   │   │   └── health/             # GET /health endpoint
 │   │   └── observability/          # Micrometer metrics (counters)
-│   └── src/test/java/              # Integration tests (WireMock)
+│   ├── src/test/java/              # Integration tests (WireMock)
+│   └── Dockerfile                  # Builds the gateway image (eclipse-temurin:17-jdk)
 │
 ├── account-service/                # Internal account management (port 8081)
 │   ├── src/main/java/com/eventledger/account/
@@ -84,8 +87,10 @@ event-ledger/
 │   │   │   ├── ledger/             # GET /accounts/{id}/balance, GET /accounts/{id}
 │   │   │   └── health/             # GET /health endpoint
 │   │   └── observability/          # Micrometer metrics (counters)
-│   └── src/test/java/              # Application context test
+│   ├── src/test/java/              # Application context test
+│   └── Dockerfile                  # Builds the account service image (eclipse-temurin:17-jdk)
 │
+├── docker-compose.yml              # Starts both services with correct networking
 └── pom.xml                         # Parent POM (multi-module Maven project)
 ```
 
@@ -193,10 +198,12 @@ Returns account ID and all transactions sorted by `eventTimestamp` ascending.
 
 ## Prerequisites
 
-| Tool        | Version   |
-|-------------|-----------|
-| Java        | 17+       |
-| Maven       | 3.8+      |
+| Tool          | Version  | Required for              |
+|---------------|----------|---------------------------|
+| Java          | 17+      | Running locally with Maven |
+| Maven         | 3.8+     | Building and running locally |
+| Docker        | 20.10+   | Docker Compose option     |
+| Docker Compose | 2.0+    | Docker Compose option     |
 
 > No external database, message broker, or infrastructure setup is required. Both services use an embedded **H2 in-memory database** that is initialized automatically on startup.
 
@@ -211,27 +218,53 @@ git clone <repository-url>
 cd event-ledger
 ```
 
-Build all modules from the root:
-
-```bash
-mvn clean install -DskipTests
-```
-
-Or build each service individually:
-
-```bash
-cd event-gateway-service
-mvn clean install -DskipTests
-
-cd ../account-service
-mvn clean install -DskipTests
-```
-
 ---
 
 ## Running the Services
 
-Both services must be running simultaneously for the full flow to work. Start them in separate terminals.
+### Option 1: Docker Compose (recommended)
+
+This is the easiest way to run both services. Docker Compose builds the images and starts both containers with the correct networking configuration.
+
+**Step 1 — Build the JARs:**
+
+The Dockerfiles copy the pre-built JAR from each service's `target/` directory, so you must run the Maven build first:
+
+```bash
+mvn clean package -DskipTests
+```
+
+**Step 2 — Start both services:**
+
+```bash
+docker compose up --build
+```
+
+Docker Compose will:
+- Build the `account-service` image from `./account-service/Dockerfile`
+- Build the `event-gateway-service` image from `./event-gateway-service/Dockerfile`
+- Start `account-service` first (`depends_on`)
+- Start `event-gateway-service` and configure it to reach the Account Service at `http://account-service:8081` via the internal Docker network
+
+Both services are ready when you see their Spring Boot startup logs complete.
+
+**Stop the services:**
+
+```bash
+docker compose down
+```
+
+**Rebuild after code changes:**
+
+```bash
+mvn clean package -DskipTests && docker compose up --build
+```
+
+---
+
+### Option 2: Run locally with Maven
+
+Both services must be running simultaneously. Start them in separate terminals.
 
 **Terminal 1 — Account Service (start this first):**
 
@@ -251,7 +284,11 @@ mvn spring-boot:run
 
 Event Gateway starts on **http://localhost:8080**
 
+---
+
 ### Verify both services are healthy
+
+Works for both Docker and local:
 
 ```bash
 curl http://localhost:8080/health
@@ -312,6 +349,8 @@ Both services expose an H2 web console for inspecting the in-memory database:
 | Account Service       | http://localhost:8081/h2-console | `jdbc:h2:mem:account_service_db`  |
 
 Username: `sa` — Password: _(leave blank)_
+
+> The H2 console is available in both Docker and local runs since it is enabled via `application.properties`.
 
 ---
 
