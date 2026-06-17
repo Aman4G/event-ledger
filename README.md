@@ -373,7 +373,9 @@ mvn test
 
 ### What the tests cover
 
-All tests live in `GatewayToAccountServiceIntegrationTest` and cover:
+Tests are split across two test classes.
+
+**`GatewayToAccountServiceIntegrationTest`** — core Gateway → Account Service flow:
 
 | Test | Requirement Covered |
 |------|---------------------|
@@ -385,10 +387,18 @@ All tests live in `GatewayToAccountServiceIntegrationTest` and cover:
 | `testGetEventById_EventExists` | `GET /events/{id}` returns stored event |
 | `testGetEventById_EventNotFound` | `GET /events/{id}` returns `404` for unknown event |
 | `testGetEventsByAccount_ReturnsAllEventsForAccount` | `GET /events?account=` returns all events for an account |
+| `testGetEventsByAccount_ReturnsEventsOrderedByTimestamp` | Out-of-order delivery — events submitted with earlier timestamps are returned first |
 | `testGetAccountBalance_FromAccountService` | Gateway proxies balance request, trace ID forwarded |
 | `testGetAccountBalance_AccountServiceUnavailable` | Balance endpoint returns `503` when Account Service is down |
 | `testGatewayHealthCheck` | `/health` returns service name, status, DB diagnostics, timestamp |
 | `testTraceIdPropagationAcrossServices` | `X-Trace-Id` from client is propagated to Account Service unchanged |
+
+**`CircuitBreakerConfigIntegrationTest`** — verifies Resilience4j configuration from `application.properties` is correctly wired via `Resilience4jConfig` and respected at runtime:
+
+| Test | Requirement Covered |
+|------|---------------------|
+| `circuitBreaker_OpensAfterFailureThresholdCrossed` | Circuit opens after `minimum-number-of-calls=3` failures exceed `failure-rate-threshold=50%` — 4th call is short-circuited, WireMock receives exactly 3 requests |
+| `circuitBreaker_StaysClosedWhenFailureRateBelowThreshold` | Circuit stays closed when failure rate is 33% (1 of 3 calls) — below the 50% threshold, all 3 requests reach WireMock |
 
 ---
 
@@ -491,7 +501,7 @@ Retry with backoff alone would still cause the client to wait and would worsen l
 
 | Endpoint | Account Service DOWN | Account Service UP |
 |---|---|---|
-| `POST /events` | `503` — circuit breaker fallback, event is NOT persisted to avoid inconsistency | Proceeds normally |
+| `POST /events` | `503` — circuit breaker fallback, event is NOT persisted because the Account Service call is made first | Proceeds normally |
 | `GET /events/{eventId}` | `200` — reads from Gateway DB, unaffected | `200` |
 | `GET /events?account=` | `200` — reads from Gateway DB, unaffected | `200` |
 | `GET /accounts/{id}/balance` | `503` — clear error, Account Service unreachable | `200` with balance |

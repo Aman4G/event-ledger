@@ -97,10 +97,11 @@ public class EventServiceImpl implements EventService {
     }
 
     /**
-     * Persists a new event to the gateway database and calls the Account Service to apply
-     * the corresponding transaction. Increments the accepted events metric on success.
+     * Calls the Account Service to apply the transaction first, then persists the event
+     * to the gateway database only on success. This order ensures the gateway database
+     * never contains an event whose transaction was not actually applied.
      *
-     * @param request the validated event request to persist and forward
+     * @param request the validated event request to forward and persist
      * @return EventResponse with status ACCEPTED
      */
     private EventResponse createAndApplyEvent(EventRequest request) {
@@ -115,8 +116,6 @@ public class EventServiceImpl implements EventService {
                 .createdAt(Instant.now())
                 .build();
 
-        Event savedEvent = eventRepository.save(event);
-
         accountServiceClient.applyTransaction(
                 request.getAccountId(),
                 AccountTransactionRequest.builder()
@@ -128,6 +127,8 @@ public class EventServiceImpl implements EventService {
                         .eventTimestamp(request.getEventTimestamp())
                         .build()
         );
+
+        Event savedEvent = eventRepository.save(event);
 
         eventMetricsService.incrementEventAccepted();
 
